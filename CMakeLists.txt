@@ -19,8 +19,7 @@ ament_python_install_package(${PROJECT_NAME})
 include_directories(include)
 
 if(NOT WIN32)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
+  add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 if(WIN32)
@@ -31,15 +30,17 @@ endif()
 
 set(rcutils_sources
   src/allocator.c
+  src/array_list.c
+  src/char_array.c
   src/cmdline_parser.c
   src/error_handling.c
   src/filesystem.c
   src/find.c
   src/format_string.c
   src/get_env.c
+  src/hash_map.c
   src/logging.c
   src/repl_str.c
-  src/serialized_message.c
   src/snprintf.c
   src/split.c
   src/strdup.c
@@ -47,6 +48,7 @@ set(rcutils_sources
   src/string_map.c
   src/time.c
   ${time_impl_c}
+  src/uint8_array.c
 )
 set_source_files_properties(
   ${rcutils_sources}
@@ -116,6 +118,8 @@ if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 
+  find_package(launch_testing_ament_cmake REQUIRED)
+
   if(ament_cmake_cppcheck_FOUND)
     ament_cppcheck(
       TESTNAME "cppcheck_logging_macros"
@@ -133,28 +137,34 @@ if(BUILD_TESTING)
     ament_uncrustify(
       TESTNAME "uncrustify_logging_macros"
       # the generated code might contain longer lines for templated types
-      MAX_LINE_LENGTH 999
+      MAX_LINE_LENGTH 0
       "${CMAKE_CURRENT_BINARY_DIR}/include/rcutils/logging_macros.h")
   endif()
 
   find_package(osrf_testing_tools_cpp REQUIRED)
   get_target_property(memory_tools_test_env_vars
     osrf_testing_tools_cpp::memory_tools LIBRARY_PRELOAD_ENVIRONMENT_VARIABLE)
+  get_target_property(memory_tools_is_available
+    osrf_testing_tools_cpp::memory_tools LIBRARY_PRELOAD_ENVIRONMENT_IS_AVAILABLE)
 
   ament_add_gtest(test_logging test/test_logging.cpp)
-  target_link_libraries(test_logging ${PROJECT_NAME})
+  target_link_libraries(test_logging ${PROJECT_NAME} osrf_testing_tools_cpp::memory_tools)
 
   add_executable(test_logging_long_messages test/test_logging_long_messages.cpp)
   target_link_libraries(test_logging_long_messages ${PROJECT_NAME})
-  ament_add_pytest_test(test_logging_long_messages
+  add_launch_test(
     "test/test_logging_long_messages.py"
+    TARGET test_logging_long_messages
     WORKING_DIRECTORY "$<TARGET_FILE_DIR:test_logging_long_messages>"
-    TIMEOUT 10)
+    TIMEOUT 10
+  )
 
-  ament_add_pytest_test(test_logging_output_format
+  add_launch_test(
     "test/test_logging_output_format.py"
+    TARGET test_logging_output_format
     WORKING_DIRECTORY "$<TARGET_FILE_DIR:test_logging_long_messages>"
-    TIMEOUT 10)
+    TIMEOUT 10
+  )
 
   ament_add_gmock(test_logging_macros test/test_logging_macros.cpp)
   target_link_libraries(test_logging_macros ${PROJECT_NAME})
@@ -165,15 +175,9 @@ if(BUILD_TESTING)
     COMMAND "$<TARGET_FILE:test_logging_macros_c>"
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
-  set(SKIP_TEST_IF_WIN32_OR_AARCH64 "")
-  if(WIN32)
-    # (memory tools doesn't do anything on Windows)
-    set(SKIP_TEST_IF_WIN32_OR_AARCH64 "SKIP_TEST")
-  endif()
-  # TODO(wjwwood): reenable for ARM (aarch64) when fixed in osrf_testing_tools_cpp
-  # see: https://github.com/osrf/osrf_testing_tools_cpp/issues/3
-  if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-    set(SKIP_TEST_IF_WIN32_OR_AARCH64 "SKIP_TEST")
+  set(SKIP_MEMORY_TOOLS_TEST "")
+  if(NOT memory_tools_is_available)
+    set(SKIP_MEMORY_TOOLS_TEST "SKIP_TEST")
   endif()
 
   macro(rcutils_custom_add_gtest target)
@@ -187,7 +191,7 @@ if(BUILD_TESTING)
   # Gtests
   rcutils_custom_add_gtest(test_allocator test/test_allocator.cpp
     ENV ${memory_tools_test_env_vars}
-    ${SKIP_TEST_IF_WIN32_OR_AARCH64}
+    ${SKIP_MEMORY_TOOLS_TEST}
   )
   if(TARGET test_allocator)
     target_link_libraries(test_allocator ${PROJECT_NAME} osrf_testing_tools_cpp::memory_tools)
@@ -200,12 +204,40 @@ if(BUILD_TESTING)
     target_link_libraries(test_assert ${PROJECT_NAME})
   endif()
 
+  rcutils_custom_add_gtest(test_char_array
+    test/test_char_array.cpp
+  )
+  if(TARGET test_char_array)
+    target_link_libraries(test_char_array ${PROJECT_NAME})
+  endif()
+
+  # Can't use C++ with stdatomic_helper.h
+  add_executable(test_atomics_executable
+    test/test_atomics.c
+  )
+  set_target_properties(test_atomics_executable
+    PROPERTIES
+      LANGUAGE C
+  )
+  target_link_libraries(test_atomics_executable ${PROJECT_NAME})
+  add_test(NAME test_atomics COMMAND test_atomics_executable)
+
   rcutils_custom_add_gmock(test_error_handling test/test_error_handling.cpp
     # Append the directory of librcutils so it is found at test time.
     APPEND_LIBRARY_DIRS "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+    ENV ${memory_tools_test_env_vars}
   )
   if(TARGET test_error_handling)
-    target_link_libraries(test_error_handling ${PROJECT_NAME})
+    target_link_libraries(test_error_handling ${PROJECT_NAME} osrf_testing_tools_cpp::memory_tools)
+  endif()
+
+  rcutils_custom_add_gmock(test_error_handling_helpers test/test_error_handling_helpers.cpp
+    # Append the directory of librcutils so it is found at test time.
+    APPEND_LIBRARY_DIRS "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+    ENV ${memory_tools_test_env_vars}
+  )
+  if(TARGET test_error_handling_helpers)
+    target_link_libraries(test_error_handling_helpers osrf_testing_tools_cpp::memory_tools)
   endif()
 
   rcutils_custom_add_gtest(test_split
@@ -243,7 +275,7 @@ if(BUILD_TESTING)
     test/test_filesystem.cpp
   )
   if(TARGET test_filesystem)
-    target_include_directories(test_filesystem PUBLIC ${osrf_testing_tools_cpp_INCLUDE_DIRS})
+    ament_target_dependencies(test_filesystem "osrf_testing_tools_cpp")
     target_link_libraries(test_filesystem ${PROJECT_NAME})
   endif()
 
@@ -265,6 +297,7 @@ if(BUILD_TESTING)
     test/test_string_map.cpp
   )
   if(TARGET test_string_map)
+    ament_target_dependencies(test_string_map "osrf_testing_tools_cpp")
     target_link_libraries(test_string_map ${PROJECT_NAME})
   endif()
 
@@ -282,13 +315,6 @@ if(BUILD_TESTING)
     target_link_libraries(test_repl_str ${PROJECT_NAME})
   endif()
 
-  rcutils_custom_add_gtest(test_serialized_message
-    test/test_serialized_message.cpp
-  )
-  if(TARGET test_serialized_message)
-    target_link_libraries(test_serialized_message ${PROJECT_NAME})
-  endif()
-
   rcutils_custom_add_gtest(test_time
     test/test_time.cpp
     ENV ${memory_tools_test_env_vars})
@@ -301,6 +327,27 @@ if(BUILD_TESTING)
   )
   if(TARGET test_snprintf)
     target_link_libraries(test_snprintf ${PROJECT_NAME})
+  endif()
+
+  rcutils_custom_add_gtest(test_uint8_array
+    test/test_uint8_array.cpp
+  )
+  if(TARGET test_uint8_array)
+    target_link_libraries(test_uint8_array ${PROJECT_NAME})
+  endif()
+
+  rcutils_custom_add_gtest(test_array_list
+    test/test_array_list.cpp
+  )
+  if(TARGET test_array_list)
+    target_link_libraries(test_array_list ${PROJECT_NAME})
+  endif()
+
+  rcutils_custom_add_gtest(test_hash_map
+    test/test_hash_map.cpp
+  )
+  if(TARGET test_hash_map)
+    target_link_libraries(test_hash_map ${PROJECT_NAME})
   endif()
 endif()
 

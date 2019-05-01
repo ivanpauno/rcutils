@@ -22,7 +22,7 @@ int main(int, char **)
 {
   rcutils_ret_t ret = rcutils_logging_initialize();
   if (ret != RCUTILS_RET_OK) {
-    fprintf(stderr, "error initializing logging: %s\n", rcutils_get_error_string_safe());
+    fprintf(stderr, "error initializing logging: %s\n", rcutils_get_error_string().str);
     return -1;
   }
 
@@ -35,7 +35,7 @@ int main(int, char **)
   }
   message[sizeof(message) - 2] = 'X';
   message[sizeof(message) - 1] = '\0';
-  rcutils_log(&location, RCUTILS_LOG_SEVERITY_INFO, "name1", message);
+  rcutils_log(&location, RCUTILS_LOG_SEVERITY_INFO, "name1", "%s", message);
 
   message[1] = '%';
   message[2] = 'd';

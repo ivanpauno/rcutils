@@ -124,13 +124,14 @@ int main(int argc, char ** argv)
     return 15;
   }
   if (strcmp(g_last_log_event.message, "message foo")) {
-    fprintf(stderr, "message unexpectedly not 'empty message'\n");
+    fprintf(stderr, "message unexpectedly not 'message foo'\n");
     return 16;
   }
 
   rcutils_logging_set_output_handler(previous_output_handler);
   if (g_last_log_event.message) {
-    free(g_last_log_event.message);
+    rcutils_allocator_t allocator = rcutils_get_default_allocator();
+    allocator.deallocate(g_last_log_event.message, allocator.state);
   }
 
   ret = rcutils_logging_shutdown();

@@ -62,7 +62,7 @@ typedef struct rcutils_allocator_t
    * This function must be able to take an input pointer of `NULL` and succeed.
    */
   void * (*reallocate)(void * pointer, size_t size, void * state);
-  /// Allocate memory with all elements set to zero, given a number of elemets and their size.
+  /// Allocate memory with all elements set to zero, given a number of elements and their size.
   /** An error should be indicated by returning `NULL`. */
   void * (*zero_allocate)(size_t number_of_elements, size_t size_of_element, void * state);
   /// Implementation defined state storage.
@@ -122,7 +122,7 @@ rcutils_allocator_is_valid(const rcutils_allocator_t * allocator);
 
 #define RCUTILS_CHECK_ALLOCATOR_WITH_MSG(allocator, msg, fail_statement) \
   if (!rcutils_allocator_is_valid(allocator)) { \
-    RCUTILS_SET_ERROR_MSG(msg, rcutils_get_default_allocator()) \
+    RCUTILS_SET_ERROR_MSG(msg); \
     fail_statement; \
   }
 

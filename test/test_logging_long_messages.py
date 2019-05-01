@@ -13,44 +13,41 @@
 # limitations under the License.
 
 import os
+import unittest
 
-from launch.legacy import LaunchDescriptor
-from launch.legacy.exit_handler import ignore_exit_handler
-from launch.legacy.launcher import DefaultLauncher
-from launch.legacy.output_handler import ConsoleOutput
-from launch_testing import create_handler
+from launch import LaunchDescription
+from launch.actions import ExecuteProcess
+from launch.actions import OpaqueFunction
+
+import launch_testing
+import launch_testing.asserts
 
 
-def test_logging_long_messages():
-    launch_descriptor = LaunchDescriptor()
-
-    output_file = os.path.join(os.path.dirname(__file__), 'test_logging_long_messages')
-    handler = create_handler(
-        'test_logging_long_messages', launch_descriptor, output_file)
-    assert handler, 'Cannot find appropriate handler for %s' % output_file
-
+def generate_test_description(ready_fn):
+    launch_description = LaunchDescription()
     # Set the output format to a "verbose" format that is expected by the executable output
     os.environ['RCUTILS_CONSOLE_OUTPUT_FORMAT'] = \
         '[{severity}] [{name}]: {message} ({function_name}() at {file_name}:{line_number})'
     executable = os.path.join(os.getcwd(), 'test_logging_long_messages')
     if os.name == 'nt':
         executable += '.exe'
-    launch_descriptor.add_process(
-        cmd=[executable],
-        name='test_logging_long_messages',
-        exit_handler=ignore_exit_handler,  # The process will automatically exit after printing.
-        output_handlers=[ConsoleOutput(), handler],
+    process_name = 'test_logging_long_messages'
+    launch_description.add_action(ExecuteProcess(
+        cmd=[executable], name=process_name, output='screen'
+    ))
+
+    launch_description.add_action(
+        OpaqueFunction(function=lambda context: ready_fn())
     )
-
-    launcher = DefaultLauncher()
-    launcher.add_launch_descriptor(launch_descriptor)
-    rc = launcher.launch()
-
-    assert rc == 0, \
-        "The launch file failed with exit code '" + str(rc) + "'"
-
-    handler.check()
+    return launch_description, {'process_name': process_name}
 
 
-if __name__ == '__main__':
-    test_logging_long_messages()
+class TestLoggingLongMessages(unittest.TestCase):
+
+    def test_logging_output(self, proc_output, process_name):
+        """Test executable output against expectation."""
+        proc_output.assertWaitFor(
+            expected_output=launch_testing.tools.expected_output_from_file(
+                path=os.path.join(os.path.dirname(__file__), process_name)
+            ), process=process_name, timeout=10
+        )

@@ -13,19 +13,20 @@
 # limitations under the License.
 
 import os
+import unittest
 
-from launch.legacy import LaunchDescriptor
-from launch.legacy.exit_handler import ignore_exit_handler
-from launch.legacy.launcher import DefaultLauncher
-from launch.legacy.output_handler import ConsoleOutput
-from launch_testing import create_handler
+from launch import LaunchDescription
+from launch.actions import ExecuteProcess
+from launch.actions import OpaqueFunction
+
+import launch_testing
+import launch_testing.asserts
 
 
-def test_logging_output_format():
-    launch_descriptor = LaunchDescriptor()
+def generate_test_description(ready_fn):
+    processes_to_test = []
 
-    handlers = []
-
+    launch_description = LaunchDescription()
     # Re-use the test_logging_long_messages test binary and modify the output format from an
     # environment variable.
     executable = os.path.join(os.getcwd(), 'test_logging_long_messages')
@@ -37,76 +38,59 @@ def test_logging_output_format():
     env_long['RCUTILS_CONSOLE_OUTPUT_FORMAT'] = \
         '[{{name}}].({severity}) output: {file_name}:{line_number} {message}, again: {message} ({function_name}()){'  # noqa
     name = 'test_logging_output_format_long'
-    output_file = os.path.join(os.path.dirname(__file__), name)
-    handler = create_handler(name, launch_descriptor, output_file)
-    assert handler, 'Cannot find appropriate handler for %s' % output_file
-    launch_descriptor.add_process(
-        cmd=[executable],
-        env=env_long,
-        name=name,
-        exit_handler=ignore_exit_handler,
-        output_handlers=[ConsoleOutput(), handler],
-    )
-    handlers.append(handler)
+    launch_description.add_action(ExecuteProcess(
+        cmd=[executable], env=env_long, name=name, output='screen'
+    ))
+    processes_to_test.append(name)
 
     env_edge_cases = dict(os.environ)
     # This custom output is to check different edge cases of the output format string parsing.
     env_edge_cases['RCUTILS_CONSOLE_OUTPUT_FORMAT'] = '{}}].({unknown_token}) {{{{'
     name = 'test_logging_output_format_edge_cases'
-    output_file = os.path.join(os.path.dirname(__file__), name)
-    handler = create_handler(name, launch_descriptor, output_file)
-    assert handler, 'Cannot find appropriate handler for %s' % output_file
-    launch_descriptor.add_process(
-        cmd=[executable],
-        env=env_edge_cases,
-        name=name,
-        exit_handler=ignore_exit_handler,
-        output_handlers=[ConsoleOutput(), handler],
-    )
-    handlers.append(handler)
+    launch_description.add_action(ExecuteProcess(
+        cmd=[executable], env=env_edge_cases, name=name, output='screen'
+    ))
+    processes_to_test.append(name)
 
     env_no_tokens = dict(os.environ)
     # This custom output is to check that there are no issues when no tokens are used.
     env_no_tokens['RCUTILS_CONSOLE_OUTPUT_FORMAT'] = 'no_tokens'
     name = 'test_logging_output_format_no_tokens'
-    output_file = os.path.join(os.path.dirname(__file__), name)
-    handler = create_handler(name, launch_descriptor, output_file)
-    assert handler, 'Cannot find appropriate handler for %s' % output_file
-    launch_descriptor.add_process(
-        cmd=[executable],
-        env=env_no_tokens,
-        name=name,
-        exit_handler=ignore_exit_handler,
-        output_handlers=[ConsoleOutput(), handler],
-    )
-    handlers.append(handler)
+    launch_description.add_action(ExecuteProcess(
+        cmd=[executable], env=env_no_tokens, name=name, output='screen'
+    ))
+    processes_to_test.append(name)
 
     env_time_tokens = dict(os.environ)
     # This custom output is to check that time stamps work correctly
     env_time_tokens['RCUTILS_CONSOLE_OUTPUT_FORMAT'] = "'{time}' '{time_as_nanoseconds}'"
     name = 'test_logging_output_timestamps'
-    output_file = os.path.join(os.path.dirname(__file__), name)
-    handler = create_handler(name, launch_descriptor, output_file)
-    assert handler, 'Cannot find appropriate handler for %s' % output_file
-    launch_descriptor.add_process(
-        cmd=[executable],
-        env=env_time_tokens,
-        name=name,
-        exit_handler=ignore_exit_handler,
-        output_handlers=[ConsoleOutput(), handler],
+    launch_description.add_action(ExecuteProcess(
+        cmd=[executable], env=env_time_tokens, name=name, output='screen'
+    ))
+    processes_to_test.append(name)
+
+    launch_description.add_action(
+        OpaqueFunction(function=lambda context: ready_fn())
     )
-    handlers.append(handler)
 
-    launcher = DefaultLauncher()
-    launcher.add_launch_descriptor(launch_descriptor)
-    rc = launcher.launch()
-
-    assert rc == 0, \
-        "The launch file failed with exit code '" + str(rc) + "'"
-
-    for handler in handlers:
-        handler.check()
+    return launch_description, {'processes_to_test': processes_to_test}
 
 
-if __name__ == '__main__':
-    test_logging_output_format()
+@launch_testing.post_shutdown_test()
+class TestLoggingOutputFormatAfterShutdown(unittest.TestCase):
+
+    def test_logging_output(self, proc_output, processes_to_test):
+        """Test all executables output against expectations."""
+        for process_name in processes_to_test:
+            launch_testing.asserts.assertInStdout(
+                proc_output,
+                expected_output=launch_testing.tools.expected_output_from_file(
+                    path=os.path.join(os.path.dirname(__file__), process_name)
+                ),
+                process=process_name
+            )
+
+    def test_processes_exit_codes(self, proc_info):
+        """Test that all executables finished cleanly."""
+        launch_testing.asserts.assertExitCodes(proc_info)
